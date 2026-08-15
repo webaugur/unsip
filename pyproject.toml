@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unsip"
+version = "0.1.0"
+description = "Throttled unzip with Info-ZIP flags and periodic fsync"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "David L Norris", email = "dave@webaugur.com" }]
+urls = { Homepage = "https://github.com/webaugur/unsip" }
+
+[project.scripts]
+unsip = "unsip.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["unsip"]
