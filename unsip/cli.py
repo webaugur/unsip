@@ -7,7 +7,10 @@ import sys
 import zipfile
 from pathlib import Path
 
-from unsip.extract import UnsipError, extract_zip
+import traceback
+
+from unsip.errors import UnsipError, write_backtrace
+from unsip.extract import extract_zip
 
 USAGE = """\
 unsip [{flags}] file[.zip] [file(s) ...] [-x xfile(s) ...] [-d exdir]
@@ -161,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     archive = cfg["zip_path"]
     emit = _emit(cfg["quiet"])
     if not archive.is_file():
-        print(f"unsip: cannot find {archive}", file=sys.stderr)
+        print(f"unsip: cannot find zip file {archive}", file=sys.stderr)
         return 9
     try:
         if cfg["mode"] == "list":
@@ -179,7 +182,25 @@ def main(argv: list[str] | None = None) -> int:
             include=cfg["include"],
             exclude=cfg["exclude"],
         )
-    except (UnsipError, zipfile.BadZipFile, OSError) as exc:
+    except KeyboardInterrupt:
+        print("unsip: interrupted", file=sys.stderr)
+        print("  already-written files are kept; re-run the same command to resume", file=sys.stderr)
+        return 130
+    except UnsipError as exc:
         print(f"unsip: {exc}", file=sys.stderr)
+        return 1
+    except zipfile.BadZipFile as exc:
+        print(f"unsip: archive is damaged or not a zip: {archive}: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        from unsip.errors import explain_oserror
+
+        print(explain_oserror(exc, doing="failed", path=archive), file=sys.stderr)
+        return 1
+    except Exception as exc:
+        path = write_backtrace(exc, cfg["dest"])
+        print(f"unsip: unexpected error: {exc}", file=sys.stderr)
+        print(f"  this is a bug; backtrace written to {path}", file=sys.stderr)
+        traceback.print_exc()
         return 1
     return 0

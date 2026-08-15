@@ -4,7 +4,10 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import errno
+
 from unsip.cli import main, parse_argv
+from unsip.errors import explain_oserror
 from unsip.extract import extract_zip
 
 
@@ -49,6 +52,34 @@ class UnsipTests(unittest.TestCase):
                 sys.stdout = old
             self.assertEqual(code, 0)
             self.assertIn("dir/a.txt", buf.getvalue())
+
+    def test_explain_enospc(self):
+        err = OSError(errno.ENOSPC, "No space left")
+        err.filename = "/disk/full"
+        msg = explain_oserror(err, doing="cannot write", path="/disk/full")
+        self.assertIn("no space left", msg)
+        self.assertIn("/disk/full", msg)
+
+    def test_ctrl_c_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            zpath = Path(tmp) / "a.zip"
+            _zip(zpath)
+            dest = Path(tmp) / "out"
+            from unittest.mock import patch
+
+            with patch("unsip.cli.extract_zip", side_effect=KeyboardInterrupt):
+                err = io.StringIO()
+                import sys
+
+                old = sys.stderr
+                sys.stderr = err
+                try:
+                    code = main(["-d", str(dest), str(zpath)])
+                finally:
+                    sys.stderr = old
+            self.assertEqual(code, 130)
+            self.assertIn("interrupted", err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
 
 
 if __name__ == "__main__":

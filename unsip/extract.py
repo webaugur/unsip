@@ -8,11 +8,9 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+from unsip.errors import UnsipError, explain_oserror
+
 CHUNK = 1024 * 512
-
-
-class UnsipError(RuntimeError):
-    pass
 
 
 def fmt_bytes(n: int) -> str:
@@ -53,10 +51,17 @@ def extract_zip(
     include: list[str] | None = None,
     exclude: list[str] | None = None,
 ) -> Path:
-    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise UnsipError(explain_oserror(exc, doing="cannot create destination", path=dest)) from exc
+    if not archive.is_file():
+        raise UnsipError(f"cannot find archive {archive}")
     emit = log or (lambda _m: None)
     copied = skipped = 0
     since_sync = 0
+    current = ""
+    tmp: Path | None = None
     try:
         with zipfile.ZipFile(archive) as zf:
             members = zf.infolist()
@@ -66,6 +71,7 @@ def extract_zip(
             )
             for info in members:
                 name = info.filename
+                current = name
                 if not wanted(name, include, exclude):
                     continue
                 if name.endswith("/"):
@@ -101,13 +107,31 @@ def extract_zip(
                     fh.flush()
                     os.fsync(fh.fileno())
                 tmp.replace(out)
+                tmp = None
                 copied += 1
                 if copied % 200 == 0:
                     emit(f"extract progress {copied} written, {skipped} skipped")
+    except KeyboardInterrupt:
+        emit(
+            f"interrupted while extracting {current or archive}"
+            + (f" (partial {tmp.name} left)" if tmp and tmp.exists() else "")
+        )
+        emit("already-written files are kept; re-run the same command to resume")
+        raise
     except zipfile.BadZipFile as exc:
-        raise UnsipError(f"not a zip: {archive}: {exc}") from exc
+        raise UnsipError(
+            f"archive is damaged or not a zip: {archive}"
+            + (f" (while reading {current})" if current else "")
+            + f": {exc}"
+        ) from exc
     except OSError as exc:
-        raise UnsipError(f"extract failed: {exc}") from exc
+        raise UnsipError(
+            explain_oserror(
+                exc,
+                doing=f"failed while extracting {current or archive}",
+                path=tmp or dest,
+            )
+        ) from exc
     os.sync()
     emit(f"extract done: {copied} written, {skipped} skipped → {dest}")
     return dest
