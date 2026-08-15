@@ -31,6 +31,16 @@ class UnsipTests(unittest.TestCase):
         self.assertEqual(cfg["dest"], Path("dest"))
         self.assertEqual(cfg["zip_path"], Path("archive.zip"))
 
+    def test_v_alone_lists_like_unzip(self):
+        cfg = parse_argv(["-v", "archive.zip"])
+        self.assertEqual(cfg["mode"], "list")
+        self.assertTrue(cfg["verbose"])
+
+    def test_v_with_d_extracts(self):
+        cfg = parse_argv(["-v", "-d", "dest", "archive.zip"])
+        self.assertEqual(cfg["mode"], "extract")
+        self.assertTrue(cfg["verbose"])
+
     def test_extract_skip_and_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             zpath = Path(tmp) / "a.zip"
@@ -52,6 +62,20 @@ class UnsipTests(unittest.TestCase):
                 sys.stdout = old
             self.assertEqual(code, 0)
             self.assertIn("dir/a.txt", buf.getvalue())
+
+            dest2 = Path(tmp) / "out2"
+            out = io.StringIO()
+            old = sys.stdout
+            sys.stdout = out
+            try:
+                code = main(["-d", str(dest2), str(zpath)])
+            finally:
+                sys.stdout = old
+            self.assertEqual(code, 0)
+            text = out.getvalue()
+            self.assertIn("Archive:", text)
+            self.assertTrue("inflating:" in text or "extracting:" in text)
+            self.assertIn("b.txt", text)
 
     def test_explain_enospc(self):
         err = OSError(errno.ENOSPC, "No space left")

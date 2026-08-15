@@ -10,7 +10,8 @@ from pathlib import Path
 import traceback
 
 from unsip.errors import UnsipError, write_backtrace
-from unsip.extract import extract_zip
+from unsip import __version__
+from unsip.extract import extract_zip, zip_method
 
 USAGE = """\
 unsip [{flags}] file[.zip] [file(s) ...] [-x xfile(s) ...] [-d exdir]
@@ -26,8 +27,8 @@ Flags:
   -j       junk paths (write all files into the extract dir)
   -l       list archive contents
   -t       test archive integrity
-  -q       quiet
-  -v       verbose
+  -q       quiet (no per-file lines)
+  -v       verbose listing (unzip -v); with -d/-n/-o also print sizes while extracting
   -h       this help
 """
 
@@ -45,7 +46,9 @@ def parse_argv(argv: list[str]) -> dict:
         raise UnsipError(str(exc)) from exc
 
     dest = Path(".")
+    dest_set = False
     overwrite = "skip_complete"
+    overwrite_set = False
     junk = False
     quiet = False
     verbose = False
@@ -58,10 +61,13 @@ def parse_argv(argv: list[str]) -> dict:
             raise SystemExit(0)
         if opt == "-d":
             dest = Path(arg)
+            dest_set = True
         elif opt == "-n":
             overwrite = "never"
+            overwrite_set = True
         elif opt == "-o":
             overwrite = "always"
+            overwrite_set = True
         elif opt == "-j":
             junk = True
         elif opt == "-q":
@@ -85,6 +91,7 @@ def parse_argv(argv: list[str]) -> dict:
         tok = rest[i]
         if tok == "-d" and i + 1 < len(rest):
             dest = Path(rest[i + 1])
+            dest_set = True
             i += 2
             continue
         if tok == "-x":
@@ -104,7 +111,14 @@ def parse_argv(argv: list[str]) -> dict:
         i += 1
 
     if zip_path is None:
+        if verbose:
+            print(f"unsip {__version__} of 15 Aug 2026, by David L Norris.")
+            print("Info-ZIP compatible flags; fsync-throttled extract.")
+            raise SystemExit(0)
         raise UnsipError("missing zip file")
+    # unzip -v archive.zip is a verbose listing, not a silent extract
+    if verbose and mode == "extract" and not dest_set and not overwrite_set and not junk:
+        mode = "list"
     return {
         "zip_path": zip_path,
         "dest": dest,
@@ -128,13 +142,36 @@ def _emit(quiet: bool):
 
 def list_zip(archive: Path, *, verbose: bool) -> int:
     with zipfile.ZipFile(archive) as zf:
-        if verbose:
-            print(f"Archive:  {archive}")
-        for info in zf.infolist():
-            if verbose:
-                print(f"{info.file_size:10d}  {info.filename}")
-            else:
+        print(f"Archive:  {archive}")
+        if not verbose:
+            for info in zf.infolist():
                 print(info.filename)
+            return 0
+        print(" Length   Method    Size  Cmpr    Date    Time   CRC-32   Name")
+        print("--------  ------  ------- ---- ---------- ----- --------  ----")
+        nfiles = 0
+        usize = csize = 0
+        for info in zf.infolist():
+            if info.filename.endswith("/"):
+                continue
+            nfiles += 1
+            usize += info.file_size
+            csize += info.compress_size
+            cmpr = 0
+            if info.file_size:
+                cmpr = int(round(100 * (1 - info.compress_size / info.file_size)))
+            y, mo, d, h, mi, _s = info.date_time
+            print(
+                f"{info.file_size:8d}  {zip_method(info):6}  {info.compress_size:7d} "
+                f"{cmpr:3d}% {mo:02d}-{d:02d}-{y:04d} {h:02d}:{mi:02d} "
+                f"{info.CRC:08x}  {info.filename}"
+            )
+        print("--------          -------  ---                            -------")
+        tot = 0
+        if usize:
+            tot = int(round(100 * (1 - csize / usize)))
+        noun = "file" if nfiles == 1 else "files"
+        print(f"{usize:8d}          {csize:7d} {tot:3d}%                            {nfiles} {noun}")
     return 0
 
 
@@ -171,6 +208,9 @@ def main(argv: list[str] | None = None) -> int:
             return list_zip(archive, verbose=cfg["verbose"])
         if cfg["mode"] == "test":
             return test_zip(archive, emit)
+        if not cfg["quiet"]:
+            print(f"Archive:  {archive}")
+        chatter = None if cfg["quiet"] else (lambda m: print(m))
         extract_zip(
             archive,
             cfg["dest"],
@@ -181,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             junk_paths=cfg["junk"],
             include=cfg["include"],
             exclude=cfg["exclude"],
+            chatter=chatter,
+            verbose=cfg["verbose"],
         )
     except KeyboardInterrupt:
         print("unsip: interrupted", file=sys.stderr)

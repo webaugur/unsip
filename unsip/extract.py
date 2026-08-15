@@ -31,6 +31,21 @@ def safe_join(dest: Path, name: str) -> Path:
     return dest / name
 
 
+def zip_method(info: zipfile.ZipInfo) -> str:
+    return {
+        zipfile.ZIP_STORED: "Stored",
+        zipfile.ZIP_DEFLATED: "Defl:N",
+    }.get(info.compress_type, f"#{info.compress_type}")
+
+
+def zip_action(info: zipfile.ZipInfo) -> str:
+    if info.filename.endswith("/"):
+        return "creating"
+    if info.compress_type == zipfile.ZIP_STORED:
+        return "extracting"
+    return "inflating"
+
+
 def wanted(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
     if exclude and any(name == e or name.startswith(e.rstrip("/") + "/") for e in exclude):
         return False
@@ -50,6 +65,8 @@ def extract_zip(
     junk_paths: bool = False,
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    chatter: Callable[[str], None] | None = None,
+    verbose: bool = False,
 ) -> Path:
     try:
         dest.mkdir(parents=True, exist_ok=True)
@@ -58,6 +75,7 @@ def extract_zip(
     if not archive.is_file():
         raise UnsipError(f"cannot find archive {archive}")
     emit = log or (lambda _m: None)
+    say = chatter or (lambda _m: None)
     copied = skipped = 0
     since_sync = 0
     current = ""
@@ -65,10 +83,11 @@ def extract_zip(
     try:
         with zipfile.ZipFile(archive) as zf:
             members = zf.infolist()
-            emit(
-                f"extract {len(members)} entries → {dest} "
-                f"(sync every {fmt_bytes(sync_every)}, pause {pause}s)"
-            )
+            if verbose:
+                emit(
+                    f"extract {len(members)} entries → {dest} "
+                    f"(sync every {fmt_bytes(sync_every)}, pause {pause}s)"
+                )
             for info in members:
                 name = info.filename
                 current = name
@@ -77,6 +96,8 @@ def extract_zip(
                 if name.endswith("/"):
                     if not junk_paths:
                         safe_join(dest, name).mkdir(parents=True, exist_ok=True)
+                        extra = f"  ({fmt_bytes(info.file_size)})" if verbose else ""
+                        say(f"   creating: {name}{extra}")
                     continue
                 rel = Path(name).name if junk_paths else name
                 out = safe_join(dest, rel)
@@ -85,9 +106,13 @@ def extract_zip(
                 same = exists and out.stat().st_size == info.file_size
                 if exists and overwrite == "never":
                     skipped += 1
+                    extra = f"  ({fmt_bytes(info.file_size)}, exists)" if verbose else ""
+                    say(f"   skipping: {name}{extra}")
                     continue
                 if same and overwrite != "always":
                     skipped += 1
+                    extra = f"  ({fmt_bytes(info.file_size)}, same size)" if verbose else ""
+                    say(f"   skipping: {name}{extra}")
                     continue
                 tmp = out.with_name(out.name + ".extract")
                 with zf.open(info, "r") as src, tmp.open("wb") as fh:
@@ -109,7 +134,11 @@ def extract_zip(
                 tmp.replace(out)
                 tmp = None
                 copied += 1
-                if copied % 200 == 0:
+                extra = ""
+                if verbose:
+                    extra = f"  ({zip_method(info)}, {fmt_bytes(info.file_size)})"
+                say(f"  {zip_action(info)}: {name}{extra}")
+                if verbose and copied % 200 == 0:
                     emit(f"extract progress {copied} written, {skipped} skipped")
     except KeyboardInterrupt:
         emit(
@@ -133,5 +162,6 @@ def extract_zip(
             )
         ) from exc
     os.sync()
-    emit(f"extract done: {copied} written, {skipped} skipped → {dest}")
+    if verbose:
+        emit(f"extract done: {copied} written, {skipped} skipped → {dest}")
     return dest

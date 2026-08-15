@@ -31,7 +31,7 @@ unsip --sync-every 4194304 --pause 1 -d dest archive.zip
 | `-l` | list |
 | `-t` | test CRC |
 | `-q` | quiet |
-| `-v` | verbose |
+| `-v` | verbose listing (`unsip -v file.zip`); with `-d`/`-n`/`-o` also print size/method while extracting |
 | `--sync-every BYTES` | fsync after this many uncompressed bytes (default 8 MiB) |
 | `--pause SECONDS` | sleep after each sync (default 0.4) |
 
