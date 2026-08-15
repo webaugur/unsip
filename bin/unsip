@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HERE="$(dirname "$(readlink -f "$0")")"
+ROOT="$(cd "$HERE/.." && pwd)"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -m unsip "$@"
